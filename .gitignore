@@ -1,0 +1,12 @@
+# 敏感信息 —— 绝不能提交到GitHub！
+mail_config.txt
+
+# 运行时生成
+state.json
+server.log
+今日操作清单.html
+
+# 系统/缓存
+__pycache__/
+*.pyc
+.DS_Store

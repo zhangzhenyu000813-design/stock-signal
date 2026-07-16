@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>今日操作清单 · 实时</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;background:#f5f6f8;color:#1f2329;padding:18px;max-width:980px;margin:0 auto}
+h1{font-size:20px;margin-bottom:4px}
+.sub{color:#8a9099;font-size:13px;margin-bottom:14px}
+.banner{padding:14px 16px;border-radius:10px;font-size:15px;font-weight:600;margin-bottom:16px}
+.banner.buy{background:#fdecec;color:#d83a3a;border:1px solid #f5c2c2}
+.banner.wait{background:#eef1f5;color:#5a6472;border:1px solid #dfe3e8}
+.banner.sell{background:#eafaf1;color:#1f9d55;border:1px solid #c2ecd2}
+table{width:100%;border-collapse:collapse;background:#fff;border-radius:10px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.05)}
+th,td{padding:11px 12px;text-align:center;border-bottom:1px solid #f0f1f3;font-size:13px}
+th{background:#fafbfc;color:#8a9099;font-weight:600;font-size:12px}
+td.name{text-align:left;font-weight:600}
+.tag{display:inline-block;padding:3px 10px;border-radius:6px;font-size:12px;font-weight:600}
+.t-buy{background:#fdecec;color:#d83a3a}
+.t-sell{background:#eafaf1;color:#1f9d55}
+.t-hold{background:#eef1f5;color:#5a6472}
+.t-skip{background:#f0f0f0;color:#999}
+.foot{margin-top:18px;color:#8a9099;font-size:12px;line-height:1.8}
+.foot b{color:#1f2329}
+.spin{display:inline-block;width:12px;height:12px;border:2px solid #ccc;border-top-color:#1f9d55;border-radius:50%;animation:r .8s linear infinite;vertical-align:-2px}
+@keyframes r{to{transform:rotate(360deg)}}
+@media(max-width:640px){th,td{padding:8px 5px;font-size:11px}td.name{font-size:12px}}
+</style>
+</head>
+<body>
+<h1>📊 今日操作清单</h1>
+<div class="sub">本金 ¥1000 · 单只上限 30% · 止损 -8% · 数据每 60 秒自动刷新 <span id="spin" class="spin"></span></div>
+<div id="banner" class="banner wait">加载中…</div>
+<table>
+<thead><tr><th>标的</th><th>现价</th><th>信号</th><th>买入预案</th><th>止损价</th><th>理由</th></tr></thead>
+<tbody id="tb"><tr><td colspan="6">加载中…</td></tr></tbody>
+</table>
+<div class="foot">
+<b>怎么用：</b>看到<span style="color:#d83a3a;font-weight:600">买入</span>信号 → 按预案股数在招商证券 APP 下单；看到<span style="color:#1f9d55;font-weight:600">卖出/减仓</span> → 减仓或清仓；其余<b>持有/观望</b>别乱动。<br>
+<b>风控护栏：</b>单只最多用 30% 本金 · 每笔 -8% 止损 · 买不起一手的高价股提示换低价 ETF。<br>
+<b>邮件提醒：</b>出现买入/卖出信号时自动发邮件（同信号当天只发一次）。在 <code>mail_config.txt</code> 填邮箱地址+授权码即开启。<br>
+<b>提醒：</b>本工具只算信号，不替你下单，不碰账户。A 股 T+1、无杠杆，做不出"月翻十倍"。
+</div>
+<script>
+function cls(a){return {买入:'t-buy','卖出/减仓':'t-sell','持有/观望':'t-hold',跳过:'t-skip','本金不足':'t-skip'}[a]||'t-hold'}
+async function load(){
+  try{
+    const d=await fetch('/api/signals').then(r=>r.json());
+    document.querySelector('.sub').innerHTML='本金 ¥'+d.capital+' · 单只上限 30%（¥'+d.per+'） · 止损 -8% · 更新于 '+d.updated+' <span class="spin"></span>'+(d.mail_on?' · <span style="color:#1f9d55">📩邮件提醒已开启</span>':' · <a href="#" style="color:#d98a00" title="在 mail_config.txt 填邮箱和授权码">📩邮件未配置</a>');
+    const b=document.getElementById('banner');
+    const nb=d.buys.length, ns=d.rows.filter(r=>r.action==='卖出/减仓').length;
+    if(nb>0){b.className='banner buy';b.textContent='🟢 今日有 '+nb+' 个买入信号，可按预案建仓'}
+    else if(ns>0){b.className='banner sell';b.textContent='🔴 今日无买入信号，但有 '+ns+' 个卖出/减仓信号，注意风险'}
+    else{b.className='banner wait';b.textContent='⚪ 今日无买入信号，持有观望，别瞎动'}
+    let h='';
+    for(const r of d.rows){
+      const p=r.price?('¥'+r.price):'—';
+      h+='<tr><td class="name">'+r.name+'<br><span style="color:#bbb;font-size:11px;font-weight:400">'+r.code+'</span></td>'+
+         '<td>'+p+'</td>'+
+         '<td><span class="tag '+cls(r.action)+'">'+r.action+'</span></td>'+
+         '<td>'+(r.planned||'—')+'</td>'+
+         '<td style="color:#1f9d55">'+(r.stop?('¥'+r.stop):'—')+'</td>'+
+         '<td style="color:#8a9099;font-size:12px">'+(r.reason||'')+'</td></tr>';
+    }
+    document.getElementById('tb').innerHTML=h||'<tr><td colspan="6">暂无数据</td></tr>';
+  }catch(e){document.getElementById('tb').innerHTML='<tr><td colspan="6">加载失败：'+e+'</td></tr>'}
+}
+load();
+setInterval(load,60000);
+</script>
+</body>
+</html>

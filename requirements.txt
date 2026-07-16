@@ -1,0 +1,2 @@
+# 本项目只用 Python 标准库（urllib/json/smtplib），无需安装第三方包。
+# 此文件留空即可，GitHub Actions 不需要 pip install。
