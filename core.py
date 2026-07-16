@@ -168,6 +168,43 @@ def compute_signals(codes, capital=1000):
     return rows, per, buys
 
 
+def compute_holdings(portfolio):
+    """对持仓簿算浮盈、更新最高价、检查止盈止损三线。
+    三线：止损-8%全卖 / 分批止盈+15%卖一半 / 移动止盈最高价回撤7%卖剩下。
+    返回 (alerts, portfolio)。alerts=需发邮件的卖出提醒；portfolio=更新了high的。"""
+    alerts = []
+    for h in portfolio.get("holdings", []):
+        code = str(h["code"])
+        sym, name = resolve_name(code)
+        kl = fetch_kline(sym)
+        if not kl:
+            continue
+        price = kl[-1]["close"]
+        cost = h["cost"]
+        shares = h["shares"]
+        h["high_since_buy"] = round(max(h.get("high_since_buy", cost), price), 3)
+        high = h["high_since_buy"]
+        pnl_pct = (price - cost) / cost * 100
+        h["current_price"] = price
+        h["pnl_pct"] = round(pnl_pct, 1)
+        h["name"] = name
+        sold_half = h.get("sold_half", False)
+        if price <= cost * 0.92:
+            alerts.append({"code": code, "name": name, "type": "止损卖出",
+                           "sell_shares": shares, "price": price,
+                           "reason": f"浮亏{pnl_pct:.1f}%，触止损线-8%，全卖"})
+        elif not sold_half and price >= cost * 1.15:
+            half = max((shares // 2 // 100) * 100, shares // 2)
+            alerts.append({"code": code, "name": name, "type": "分批止盈",
+                           "sell_shares": half, "price": price,
+                           "reason": f"浮盈{pnl_pct:.1f}%，触+15%，先卖一半锁利"})
+        elif sold_half and price <= high * 0.93:
+            alerts.append({"code": code, "name": name, "type": "移动止盈",
+                           "sell_shares": shares, "price": price,
+                           "reason": f"从最高¥{high}回撤7%，卖剩下"})
+    return alerts, portfolio
+
+
 def get_watchlist(path=None):
     """读 watchlist.txt，每行一个代码，# 及之后为注释。"""
     if path is None:

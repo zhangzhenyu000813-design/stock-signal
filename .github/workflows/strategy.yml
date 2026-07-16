@@ -26,10 +26,10 @@ jobs:
           MAIL_AUTHCODE: ${{ secrets.MAIL_AUTHCODE }}
         run: python task.py
 
-      - name: 提交状态文件（防重复用）
+      - name: 提交状态文件（防重复 + 持仓簿更新）
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add state.json 2>/dev/null || true
-          git commit -m "chore: 更新信号状态" || echo "无变更，跳过"
+          git add state.json portfolio.json 2>/dev/null || true
+          git commit -m "chore: 更新信号状态与持仓簿" || echo "无变更，跳过"
           git push || echo "push跳过"
