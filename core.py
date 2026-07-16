@@ -127,6 +127,7 @@ def _analyze_one(code, per):
         reason = f"RSI {r:.0f} 超买"
 
     stop = round(price * 0.92, 2)
+    shares = 0
     if action == "卖出/减仓":
         planned = "—（减仓）"
     else:
@@ -135,12 +136,12 @@ def _analyze_one(code, per):
             shares = int(per // lot_cost) * 100
             if shares == 0:
                 shares = 100
-            planned = f"{shares}股 / ¥{round(shares * price, 2)}"
+            planned = f"{shares}份({shares//100}手) / ¥{round(shares * price, 2)}"
         else:
             planned = "本金不足"
     return {"code": code, "name": name, "action": action,
             "reason": reason, "price": price, "planned": planned,
-            "stop": stop,
+            "shares": shares, "stop": stop,
             "ma5": round(m5, 3) if m5 else None,
             "ma20": round(m20, 3) if m20 else None,
             "rsi": round(r, 1) if r else None}

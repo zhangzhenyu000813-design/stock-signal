@@ -63,13 +63,16 @@ def run():
             if typ == "自选":
                 e = "🟢买入" if a["action"] == "买入" else "🔴转弱减仓"
                 lines.append(f"{e} {a['name']}（{a['code']}）现价 ¥{a['price']}")
-                if a["action"] == "买入":
+                if a["action"] == "买入" and a.get("shares"):
                     lines.append(f"    建议买入：{a.get('planned', '')}")
-                lines.append(f"    止损价：¥{a['stop']}")
+                    lines.append(f"    操作：招商APP「普通委托」，数量填 {a['shares']} 份，价格填当前价或市价")
+                lines.append(f"    止损价：¥{a['stop']}（跌到此价考虑卖）")
                 lines.append(f"    理由：{a.get('reason', '')}")
             else:  # 持仓
+                ss = a['sell_shares']
                 lines.append(f"🟡持仓{a['type']} {a['name']}（{a['code']}）现价 ¥{a['price']}")
-                lines.append(f"    建议卖出：{a['sell_shares']}股")
+                lines.append(f"    建议卖出：{ss}份({ss//100}手)")
+                lines.append(f"    操作：招商APP「普通委托卖出」，数量填 {ss} 份，价格填市价或限价")
                 lines.append(f"    理由：{a['reason']}")
                 lines.append(f"    （卖出后回复告知，更新持仓簿）")
             lines.append("")
