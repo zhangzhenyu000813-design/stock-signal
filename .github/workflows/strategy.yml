@@ -1,0 +1,35 @@
+name: 策略信号定时扫描
+
+on:
+  schedule:
+    # 每30分钟跑一次（UTC时间）。北京时间=UTC+8。
+    # 周末/非交易时段信号不变，防重复逻辑会自动跳过发信，不会刷屏。
+    - cron: '*/30 * * * *'
+  workflow_dispatch: # 允许在GitHub网页手动触发（测试用）
+
+permissions:
+  contents: write # 允许workflow提交state.json回仓库（防重复用）
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 运行策略扫描
+        env:
+          MAIL_EMAIL: ${{ secrets.MAIL_EMAIL }}
+          MAIL_AUTHCODE: ${{ secrets.MAIL_AUTHCODE }}
+        run: python task.py
+
+      - name: 提交状态文件（防重复 + 持仓簿更新）
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add state.json portfolio.json 2>/dev/null || true
+          git commit -m "chore: 更新信号状态与持仓簿" || echo "无变更，跳过"
+          git push || echo "push跳过"

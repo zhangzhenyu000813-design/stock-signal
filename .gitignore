@@ -1,0 +1,11 @@
+# 敏感信息 —— 绝不能提交到GitHub！
+mail_config.txt
+
+# 运行时生成（state.json 需要被跟踪，用于GitHub Actions防重复，不能忽略）
+server.log
+今日操作清单.html
+
+# 系统/缓存
+__pycache__/
+*.pyc
+.DS_Store
