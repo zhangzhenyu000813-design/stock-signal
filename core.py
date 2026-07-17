@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
-"""招商证券策略提醒工具 · 核心逻辑（strategy.py 与网页服务共用）"""
+"""招商证券策略提醒工具 · 核心逻辑（strategy.py 与网页服务共用）
+策略 v2：趋势过滤 + 回调企稳买入 + 趋势破坏卖出 + 移动止盈"""
 import urllib.request
 import json
 import datetime as dt
@@ -8,6 +9,14 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 UA = {"User-Agent": "Mozilla/5.0", "Referer": "https://quote.eastmoney.com/"}
+
+# ── 策略参数（可调） ──
+TREND_WINDOW = 5       # MA20 斜率看最近几天
+DRAWDOWN_MIN = 0.03    # 最小回调 3%
+DRAWDOWN_MAX = 0.08    # 最大回调 8%
+HARD_STOP = -0.08      # 硬止损 -8%
+EXTREME_DROP = -0.05   # 单日跌幅 >5% 极端止损
+TRAILING_STOP = 0.06   # 移动止盈回撤 6%
 
 
 def _get(url, tries=2):
@@ -98,39 +107,137 @@ def rsi(data, n=14):
     return 100 - 100 / (1 + rs)
 
 
+# ── 策略 v2 辅助函数 ──
+
+def ma_slope(data, n=20, window=TREND_WINDOW):
+    """MA20 最近 window 天的斜率方向。返回 (斜率值, 方向标签)。
+    正=向上，负=向下，0附近=走平。"""
+    if len(data) < n + window:
+        return 0.0, "走平"
+    ma_now = ma(data[-n:], n)
+    ma_before = ma(data[-(n + window):-window], n)
+    if ma_now is None or ma_before is None:
+        return 0.0, "走平"
+    diff = ma_now - ma_before
+    # 斜率相对于价格的比例，避免不同价位的 ETF 斜率口径不一致
+    ratio = diff / ma_before if ma_before else 0
+    if ratio > 0.005:   # >0.5% 判定向下
+        return ratio, "向上"
+    elif ratio < -0.005:
+        return ratio, "向下"
+    else:
+        return ratio, "走平"
+
+
+def drawdown_pct(data, lookback=20):
+    """当前价相对近 lookback 天最高价的回撤幅度。返回比例（正数）。"""
+    if len(data) < lookback:
+        lookback = len(data)
+    if lookback < 2:
+        return 0.0
+    high = max(d["high"] for d in data[-lookback:])
+    price = data[-1]["close"]
+    if high <= 0:
+        return 0.0
+    return (high - price) / high
+
+
+def is_stable(data):
+    """最近 2 天收盘价不创新低（企稳确认）。
+    第-1天close >= 第-2天close >= 第-3天close → 连续2天止跌。"""
+    if len(data) < 4:
+        return False
+    c1, c2, c3 = data[-1]["close"], data[-2]["close"], data[-3]["close"]
+    return c1 >= c2 and c2 >= c3
+
+
+def is_vol_shrink(data, short=5, long=20):
+    """回调期间缩量：最近 5 天平均量 < 前 20 天平均量的 80%。"""
+    if len(data) < long + short:
+        return False
+    recent_vol = sum(d["vol"] for d in data[-short:]) / short
+    prev_vol = sum(d["vol"] for d in data[-(long + short):-short]) / long
+    if prev_vol <= 0:
+        return False
+    return recent_vol < prev_vol * 0.8
+
+
 def _analyze_one(code, per):
-    """单只股票：拉数据 → 算信号 → 返回一行。供线程池并发调用。"""
+    """单只股票：拉数据 → 4层过滤算信号 → 返回一行。供线程池并发调用。
+    买入条件：趋势向上 + 回调3-8% + 企稳 + (缩量或RSI合理)
+    卖出条件（自选池）：趋势向下 + 死叉"""
     code = str(code).strip()
     sym, name = resolve_name(code)
     kl = fetch_kline(sym)
-    if len(kl) < 21:
+    if len(kl) < 26:  # 至少需要 20+5+1 天数据
         return {"code": code, "name": name, "action": "跳过",
                 "reason": "数据不足", "price": None,
-                "planned": "—", "stop": ""}
+                "planned": "—", "stop": "",
+                "trend": "—", "drawdown_pct": None,
+                "stable": False, "vol_shrink": False,
+                "signal_strength": "—", "rsi": None}
+
     price = kl[-1]["close"]
     m5, m20 = ma(kl, 5), ma(kl, 20)
     r = rsi(kl)
-    prev_m5 = ma(kl[:-1], 5)
-    prev_m20 = ma(kl[:-1], 20)
+    slope_ratio, trend = ma_slope(kl)
+    dd = drawdown_pct(kl)
+    stable = is_stable(kl)
+    vol_shrink = is_vol_shrink(kl)
 
     action = "持有/观望"
-    reason = "趋势未变"
+    reason = ""
+    signal_strength = "—"
+
+    # ── 卖出/减仓信号（自选池中的品种趋势转弱时提醒）──
+    prev_m5 = ma(kl[:-1], 5)
+    prev_m20 = ma(kl[:-1], 20)
     if prev_m5 and prev_m20 and m5 and m20:
-        if prev_m5 <= prev_m20 and m5 > m20 and (r or 0) < 70:
-            action = "买入"
-            reason = f"MA5上穿MA20金叉，RSI {r:.0f}"
-        elif prev_m5 >= prev_m20 and m5 < m20:
+        if prev_m5 >= prev_m20 and m5 < m20:
             action = "卖出/减仓"
-            reason = "MA5下穿MA20死叉"
-    if r and r >= 75:
+            reason = f"MA5下穿MA20死叉，趋势转弱"
+    if r and r >= 75 and action != "卖出/减仓":
         action = "卖出/减仓"
         reason = f"RSI {r:.0f} 超买"
 
-    stop = round(price * 0.92, 2)
+    # ── 买入信号（4层过滤）──
+    if action != "卖出/减仓":
+        # 第1层：趋势方向过滤
+        if trend != "向上":
+            action = "持有/观望"
+            reason = f"MA20趋势{trend}，不介入"
+        # 第2层：回调深度判断
+        elif dd < DRAWDOWN_MIN:
+            action = "持有/观望"
+            reason = f"回撤仅{dd*100:.1f}%，仍在高位待调"
+        elif dd > DRAWDOWN_MAX:
+            action = "持有/观望"
+            reason = f"回撤{dd*100:.1f}%过大，可能趋势已破"
+        # 第3层：企稳确认
+        elif not stable:
+            action = "持有/观望"
+            reason = f"回调{dd*100:.1f}%但未企稳，不接飞刀"
+        # 第4层：量能+RSI辅助
+        else:
+            rsi_ok = r is not None and 40 <= r <= 60
+            if vol_shrink and rsi_ok:
+                signal_strength = "强"
+            else:
+                signal_strength = "弱"
+            parts = [f"趋势向上+回调{dd*100:.1f}%+企稳"]
+            if vol_shrink:
+                parts.append("缩量")
+            if rsi_ok:
+                parts.append(f"RSI{r:.0f}合理")
+            action = "买入"
+            reason = "+".join(parts)
+
+    # ── 计划买入量 ──
+    stop = round(price * (1 + HARD_STOP), 2)  # 止损价 = -8%
     shares = 0
     if action == "卖出/减仓":
         planned = "—（减仓）"
-    else:
+    elif action == "买入":
         lot_cost = price * 100
         if lot_cost <= per:
             shares = int(per // lot_cost) * 100
@@ -139,12 +246,20 @@ def _analyze_one(code, per):
             planned = f"{shares}份({shares//100}手) / ¥{round(shares * price, 2)}"
         else:
             planned = "本金不足"
+    else:
+        planned = "—"
+
     return {"code": code, "name": name, "action": action,
             "reason": reason, "price": price, "planned": planned,
             "shares": shares, "stop": stop,
             "ma5": round(m5, 3) if m5 else None,
             "ma20": round(m20, 3) if m20 else None,
-            "rsi": round(r, 1) if r else None}
+            "rsi": round(r, 1) if r else None,
+            "trend": trend,
+            "drawdown_pct": round(dd * 100, 1) if dd else 0,
+            "stable": stable,
+            "vol_shrink": vol_shrink,
+            "signal_strength": signal_strength}
 
 
 def compute_signals(codes, capital=1000):
@@ -161,7 +276,10 @@ def compute_signals(codes, capital=1000):
             except Exception as e:
                 rows.append({"code": futs[f], "name": futs[f], "action": "跳过",
                              "reason": f"超时/出错: {e}", "price": None,
-                             "planned": "—", "stop": ""})
+                             "planned": "—", "stop": "",
+                             "trend": "—", "drawdown_pct": None,
+                             "stable": False, "vol_shrink": False,
+                             "signal_strength": "—", "rsi": None})
     # 保持原始顺序
     order = {c: i for i, c in enumerate(clean)}
     rows.sort(key=lambda r: order.get(r["code"], 999))
@@ -170,39 +288,52 @@ def compute_signals(codes, capital=1000):
 
 
 def compute_holdings(portfolio):
-    """对持仓簿算浮盈、更新最高价、检查止盈止损三线。
-    三线：止损-8%全卖 / 分批止盈+15%卖一半 / 移动止盈最高价回撤7%卖剩下。
+    """对持仓簿算浮盈、更新最高价、检查卖出条件（趋势v2）。
+    卖出优先级：1.硬止损-8%  2.单日跌>5%  3.趋势破坏(跌破MA20+MA20走平/向下)  4.移动止盈回撤6%
     返回 (alerts, portfolio)。alerts=需发邮件的卖出提醒；portfolio=更新了high的。"""
     alerts = []
     for h in portfolio.get("holdings", []):
         code = str(h["code"])
         sym, name = resolve_name(code)
         kl = fetch_kline(sym)
-        if not kl:
+        if not kl or len(kl) < 21:
             continue
         price = kl[-1]["close"]
+        prev_close = kl[-2]["close"] if len(kl) >= 2 else price
         cost = h["cost"]
         shares = h["shares"]
         h["high_since_buy"] = round(max(h.get("high_since_buy", cost), price), 3)
         high = h["high_since_buy"]
-        pnl_pct = (price - cost) / cost * 100
+        pnl_pct = (price - cost) / cost
         h["current_price"] = price
-        h["pnl_pct"] = round(pnl_pct, 1)
+        h["pnl_pct"] = round(pnl_pct * 100, 1)
         h["name"] = name
-        sold_half = h.get("sold_half", False)
-        if price <= cost * 0.92:
-            alerts.append({"code": code, "name": name, "type": "止损卖出",
+
+        m20 = ma(kl, 20)
+        _, trend = ma_slope(kl)
+        daily_chg = (price - prev_close) / prev_close if prev_close else 0
+        trailing_drop = (high - price) / high if high > 0 else 0
+
+        # 1. 硬止损：浮亏 >= -8%
+        if pnl_pct <= HARD_STOP:
+            alerts.append({"code": code, "name": name, "type": "硬止损",
                            "sell_shares": shares, "price": price,
-                           "reason": f"浮亏{pnl_pct:.1f}%，触止损线-8%，全卖"})
-        elif not sold_half and price >= cost * 1.15:
-            half = max((shares // 2 // 100) * 100, shares // 2)
-            alerts.append({"code": code, "name": name, "type": "分批止盈",
-                           "sell_shares": half, "price": price,
-                           "reason": f"浮盈{pnl_pct:.1f}%，触+15%，先卖一半锁利"})
-        elif sold_half and price <= high * 0.93:
+                           "reason": f"浮亏{pnl_pct*100:.1f}%，触硬止损线-8%，全卖"})
+        # 2. 极端波动：单日跌幅 > 5%
+        elif daily_chg <= EXTREME_DROP:
+            alerts.append({"code": code, "name": name, "type": "极端波动",
+                           "sell_shares": shares, "price": price,
+                           "reason": f"单日跌{daily_chg*100:.1f}%，极端波动全卖"})
+        # 3. 趋势破坏：收盘价 < MA20 且 MA20 走平/向下
+        elif m20 and price < m20 and trend in ("走平", "向下"):
+            alerts.append({"code": code, "name": name, "type": "趋势破坏",
+                           "sell_shares": shares, "price": price,
+                           "reason": f"价格¥{price}跌破MA20¥{m20:.3f}且趋势{trend}，全卖"})
+        # 4. 移动止盈：从最高价回撤 >= 6%（仅盈利时）
+        elif pnl_pct > 0 and trailing_drop >= TRAILING_STOP:
             alerts.append({"code": code, "name": name, "type": "移动止盈",
                            "sell_shares": shares, "price": price,
-                           "reason": f"从最高¥{high}回撤7%，卖剩下"})
+                           "reason": f"从最高¥{high}回撤{trailing_drop*100:.1f}%，锁利全卖（浮盈{pnl_pct*100:.1f}%）"})
     return alerts, portfolio
 
 
@@ -217,4 +348,4 @@ def get_watchlist(path=None):
             if not line:
                 continue
             out.append(line)
-    return out or ["512760", "512880", "510300", "159915", "588000", "512480"]
+    return out or ["512760", "512880", "510500", "588000", "512480", "159901"]

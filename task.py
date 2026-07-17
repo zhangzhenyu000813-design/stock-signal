@@ -65,8 +65,9 @@ def run():
                 lines.append(f"{e} {a['name']}（{a['code']}）现价 ¥{a['price']}")
                 if a["action"] == "买入" and a.get("shares"):
                     lines.append(f"    建议买入：{a.get('planned', '')}")
+                    lines.append(f"    信号强度：{a.get('signal_strength', '—')}")
                     lines.append(f"    操作：招商APP「普通委托」，数量填 {a['shares']} 份，价格填当前价或市价")
-                lines.append(f"    止损价：¥{a['stop']}（跌到此价考虑卖）")
+                    lines.append(f"    止损价：¥{a['stop']}（跌破此价考虑卖）")
                 lines.append(f"    理由：{a.get('reason', '')}")
             else:  # 持仓
                 ss = a['sell_shares']
@@ -89,13 +90,17 @@ def run():
     _save(PORTFOLIO, portfolio)
 
     # 打印清单（GitHub Actions 日志可看）
-    print("\n=== 自选股信号 ===")
+    print("\n=== 自选股信号（策略v2：趋势+回调企稳）===")
     for r in rows:
-        print(f"  {r['name']}({r['code']}) {r['action']} | {r.get('planned', '')} | 止损¥{r.get('stop', '')}")
+        trend = r.get('trend', '—')
+        dd = r.get('drawdown_pct', '—')
+        sig = r.get('signal_strength', '—')
+        print(f"  {r['name']}({r['code']}) {r['action']} | 趋势:{trend} 回撤:{dd}% 信号:{sig} | {r.get('planned', '')} | 止损¥{r.get('stop', '')}")
+        print(f"    理由：{r.get('reason', '')}")
     if portfolio.get("holdings"):
         print("\n=== 持仓监控 ===")
         for h in portfolio["holdings"]:
-            print(f"  {h.get('name', h['code'])}({h['code']}) {h['shares']}股 成本¥{h['cost']} "
+            print(f"  {h.get('name', h['code'])}({h['code']}) {h['shares']}份 成本¥{h['cost']} "
                   f"现价¥{h.get('current_price', '?')} 浮盈{h.get('pnl_pct', '?')}% 最高¥{h.get('high_since_buy', '?')}")
     else:
         print("\n=== 持仓：空（还没买入过）===")
