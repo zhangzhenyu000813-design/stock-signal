@@ -36,12 +36,22 @@ def run():
     if not portfolio:
         portfolio = {"cash": 1000, "banked_profit": 0, "initial_capital": 1000, "holdings": []}
 
+    # 大环境判断（牛熊总开关）：熊市屏蔽一切买入信号，只保留持仓卖出
+    market = core.market_environment()
+    bear_market = market["trend"] == "bear"
+    print(f"[环境] {market['reason']}"
+          + (" → 熊市空仓，今日不发出任何买入信号" if bear_market else " → 可正常选股买入"))
+
     new_alerts = []  # (类型, 数据)  类型="自选"|"持仓"
 
     # 1) 自选股买入/卖出信号
     codes = core.get_watchlist()
     rows, per, buys = core.compute_signals(codes, 1000)
     for r in rows:
+        # 熊市：屏蔽买入信号（持有/观望即可），持仓卖出信号不受影响
+        if bear_market and r["action"] == "买入":
+            r["action"] = "持有/观望"
+            r["reason"] = "熊市空仓：" + market["reason"]
         if r["action"] in ("买入", "卖出/减仓"):
             key = "watch:" + r["code"]
             if sent.get(key, {}).get("action") != r["action"]:

@@ -162,6 +162,30 @@ def is_vol_shrink(data, short=5, long=20):
     return recent_vol < prev_vol * 0.8
 
 
+def market_environment():
+    """判断 A 股大环境（牛熊），作为"该不该买"的总开关。
+    用沪深300指数(000300)是否在年线(250日MA)之上判断：
+    之上是 bull（可做多），之下是 bear（空仓观望，不发出任何买入信号）。
+    返回 dict: {trend, index_price, ma250, pct_above, reason}"""
+    sym = "sh000300"  # 沪深300指数
+    kl = fetch_kline(sym, days=260)
+    if not kl or len(kl) < 250:
+        return {"trend": "unknown",
+                "reason": "沪深300指数数据不足，默认谨慎（不强制空仓）",
+                "index_price": None, "ma250": None, "pct_above": None}
+    price = kl[-1]["close"]
+    ma250 = sum(d["close"] for d in kl[-250:]) / 250
+    above = price > ma250
+    pct = (price - ma250) / ma250 * 100 if ma250 else 0
+    return {
+        "trend": "bull" if above else "bear",
+        "index_price": round(price, 2),
+        "ma250": round(ma250, 2),
+        "pct_above": round(pct, 1),
+        "reason": f"沪深300 ¥{price:.2f} {'在' if above else '跌破'}年线¥{ma250:.2f}（{pct:+.1f}%）"
+    }
+
+
 def _analyze_one(code, per):
     """单只股票：拉数据 → 4层过滤算信号 → 返回一行。供线程池并发调用。
     买入条件：趋势向上 + 回调3-8% + 企稳 + (缩量或RSI合理)
