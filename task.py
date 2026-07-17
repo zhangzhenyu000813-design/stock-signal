@@ -36,22 +36,37 @@ def run():
     if not portfolio:
         portfolio = {"cash": 1000, "banked_profit": 0, "initial_capital": 1000, "holdings": []}
 
-    # 大环境判断（牛熊总开关）：熊市屏蔽一切买入信号，只保留持仓卖出
+    # 大环境判断（多维度评分+分级仓位控制，v2）
     market = core.market_environment()
-    bear_market = market["trend"] == "bear"
-    print(f"[环境] {market['reason']}"
-          + (" → 熊市空仓，今日不发出任何买入信号" if bear_market else " → 可正常选股买入"))
+    pos_pct = market["position_pct"]  # 单只最大仓位占比
+    level = market["level"]
+    emoji = market["level_emoji"]
+    score = market.get("score", "?")
+    # 🔴恶劣(0-30分)时才完全屏蔽买入；其他等级允许但控制仓位/信号强度门槛
+    hard_block = (level == "bad")
+    print(f"[环境] {emoji}{market['level'].upper()} ({score}分) | {market['reason']}"
+          + (" → 恶劣环境，今日屏蔽一切买入信号" if hard_block else f" → 单只最多{int(pos_pct*100)}%本金"))
 
     new_alerts = []  # (类型, 数据)  类型="自选"|"持仓"
 
     # 1) 自选股买入/卖出信号
     codes = core.get_watchlist()
-    rows, per, buys = core.compute_signals(codes, 1000)
+    rows, per, buys = core.compute_signals(codes, 1000, position_pct=pos_pct)
+    # 根据环境等级调整仓位和信号门槛
     for r in rows:
-        # 熊市：屏蔽买入信号（持有/观望即可），持仓卖出信号不受影响
-        if bear_market and r["action"] == "买入":
+        if hard_block and r["action"] == "买入":
+            # 🔴恶劣环境：完全屏蔽买入
             r["action"] = "持有/观望"
-            r["reason"] = "熊市空仓：" + market["reason"]
+            r["reason"] = f"恶劣环境({score}分)空仓：" + str(market.get("index_price", ""))
+        elif level in ("poor", "weak") and r["action"] == "买入":
+            # 🟠弱势(30-50) / 🟡偏弱(50-70)：仅允许最强信号
+            if r.get("signal_strength") != "强":
+                r["action"] = "持有/观望"
+                r["reason"] = f"{emoji}环境{score}分，信号不够强，跳过"
+            else:
+                # 强信号通过，但降低仓位
+                r["reason"] += f" | {emoji}环境{score}分，仓位降至{int(pos_pct*100)}%"
+        # good 等级：正常买入，不做额外限制
         if r["action"] in ("买入", "卖出/减仓"):
             key = "watch:" + r["code"]
             if sent.get(key, {}).get("action") != r["action"]:

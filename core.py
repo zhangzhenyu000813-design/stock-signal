@@ -163,26 +163,191 @@ def is_vol_shrink(data, short=5, long=20):
 
 
 def market_environment():
-    """判断 A 股大环境（牛熊），作为"该不该买"的总开关。
-    用沪深300指数(000300)是否在年线(250日MA)之上判断：
-    之上是 bull（可做多），之下是 bear（空仓观望，不发出任何买入信号）。
-    返回 dict: {trend, index_price, ma250, pct_above, reason}"""
+    """A 股大环境多维度分析（v2：从二元牛熊升级为综合评分+仓位分级）。
+
+    不再用简单的'在/不在250日均线上'做 bull/bear 二元判断，
+    而是从 4 个维度打分（总分 100），根据得分决定仓位等级：
+      70-100 🟢良好 → 正常买入（每只最多30%本金）
+      50-70  🟡偏弱 → 减半买入（15%本金），仅强信号
+      30-50  🟠弱势 → 试探买入（10%本金），仅最强信号(4层全中)
+      0-30   🔴恶劣 → 空仓观望，屏蔽一切买入
+      unknown ⚪数据不足 → 谨慎模式（按🟡处理，不禁买）
+
+    返回 dict: {score, level, level_emoji, position_pct,
+                 index_price, dimensions, reason, raw_scores}
+    """
     sym = "sh000300"  # 沪深300指数
     kl = fetch_kline(sym, days=260)
-    if not kl or len(kl) < 250:
-        return {"trend": "unknown",
-                "reason": "沪深300指数数据不足，默认谨慎（不强制空仓）",
-                "index_price": None, "ma250": None, "pct_above": None}
+    if not kl or len(kl) < 60:
+        return {"score": None, "level": "unknown", "level_emoji": "⚪",
+                "position_pct": 0.15,
+                "reason": "沪深300指数数据不足，谨慎模式（减半买入不禁）",
+                "index_price": None, "dimensions": {}, "raw_scores": {}}
+
     price = kl[-1]["close"]
-    ma250 = sum(d["close"] for d in kl[-250:]) / 250
-    above = price > ma250
-    pct = (price - ma250) / ma250 * 100 if ma250 else 0
+    scores = {}
+    dims = {}
+
+    # ── 维度1：均线位置（40分）──
+    # 用60/120/250三条均线分别打分，在上方就给分
+    s1 = 0
+    ma_parts = []
+    for period, label, pts in [(60, "MA60", 13), (120, "MA120", 13), (250, "MA250", 14)]:
+        if len(kl) >= period:
+            maval = sum(d["close"] for d in kl[-period:]) / period
+            above_ma = price > maval
+            pct_off = (price - maval) / maval * 100 if maval else 0
+            if above_ma:
+                s1 += pts
+                ma_parts.append(f"{label}上方({pct_off:+.1f}%)")
+            else:
+                ma_parts.append(f"{label}下方({pct_off:+.1f}%)")
+    scores["ma_position"] = s1
+    dims["均线位置"] = f"{s1}/40 | {'+'.join(ma_parts)}"
+
+    # ── 维度2：均线排列方向（20分）──
+    # MA5 > MA20 > MA60 为完美多头排列
+    s2 = 0
+    if len(kl) >= 60:
+        ma5 = ma(kl, 5)
+        ma20 = ma(kl, 20)
+        ma60_val = ma(kl, 60)
+        if ma5 and ma20 and ma60_val:
+            if ma5 > ma20 > ma60_val:
+                s2 = 20
+                arrangement = "完美多头(MA5>MA20>MA60)"
+            elif ma5 > ma20:
+                s2 = 12
+                arrangement = "短期多头(MA5>MA20但MA20≤MA60)"
+            elif ma5 <= ma20 and ma20 >= ma60_val:
+                s2 = 6
+                arrangement = "中期尚稳(MA5≤MA20但MA20≥MA60)"
+            else:
+                s2 = 2
+                arrangement = "空头排列(MA5<MA20<MA60)"
+        else:
+            arrangement = "数据不足"
+    else:
+        arrangement = "数据不足"
+    scores["ma_arrangement"] = s2
+    dims["均线排列"] = f"{s2}/20 | {arrangement}"
+
+    # ── 维度3：趋势动量（20分）──
+    # 复用 ma_slope 看沪深300自身的 MA20 斜率
+    s3 = 0
+    slope_ratio, slope_dir = ma_slope(kl, n=20)
+    if slope_dir == "向上":
+        if abs(slope_ratio) > 0.008:
+            s3 = 20
+        elif abs(slope_ratio) > 0.004:
+            s3 = 14
+        else:
+            s3 = 10
+    elif slope_dir == "走平":
+        s3 = 6
+    else:  # 向下
+        if abs(slope_ratio) > 0.01:
+            s3 = 0
+        elif abs(slope_ratio) > 0.005:
+            s3 = 2
+        else:
+            s3 = 4
+    scores["momentum"] = s3
+    dims["趋势动量"] = f"{s3}/20 | MA20斜率{slope_dir}({slope_ratio*100:+.2f}%/期)"
+
+    # ── 维度4：偏离年线程度与修复方向（20分）──
+    s4 = 0
+    repair_detail = ""
+    if len(kl) >= 250:
+        ma250 = sum(d["close"] for d in kl[-250:]) / 250
+        pct_from_250 = (price - ma250) / ma250 * 100 if ma250 else 0
+
+        if pct_from_250 >= 0:
+            # 年线上方
+            if pct_from_250 < 3:
+                s4 = 18
+                repair_detail = "年线上方贴近(+{:.1f}%)".format(pct_from_250)
+            elif pct_from_250 < 8:
+                s4 = 20
+                repair_detail = "年线上方健康(+{:.1f}%)".format(pct_from_250)
+            else:
+                s4 = 16
+                repair_detail = "年线上方偏高(+{:.1f}%,注意回调)".format(pct_from_250)
+        else:
+            # 年线下方 —— 关键改进：不是简单判熊市，而是看偏离度和修复迹象
+            abs_off = abs(pct_from_250)
+            # 检测是否正在向年线靠拢（最近5天 vs 前5天）
+            approaching = False
+            vol_shrinking = False
+            if len(kl) >= 10:
+                price_5d_ago = kl[-6]["close"]
+                price_10d_ago = kl[-11]["close"]
+                approaching = price > price_5d_ago > price_10d_ago  # 连续回升
+                # 成交量是否萎缩
+                recent_v = sum(d["vol"] for d in kl[-5:]) / 5
+                prev_v = sum(d["vol"] for d in kl[-10:-5]) / 5
+                if prev_v > 0:
+                    vol_shrinking = recent_v < prev_v * 0.9
+
+            if abs_off < 3:
+                # 轻微跌破，问题不大
+                if approaching or slope_dir == "向上":
+                    s4 = 14
+                    repair_detail = "年线下轻微(-{:.1f}%)但正在修复".format(abs_off)
+                else:
+                    s4 = 10
+                    repair_detail = "年线下轻微(-{:.1f}%)暂观望".format(abs_off)
+            elif abs_off < 7:
+                # 中度跌破
+                if approaching and vol_shrinking and slope_dir in ("向上", "走平"):
+                    s4 = 10
+                    repair_detail = "年线下(-{:.1f}%)但缩量企稳修复中".format(abs_off)
+                elif slope_dir in ("向上", "走平"):
+                    s4 = 7
+                    repair_detail = "年线下(-{:.1f}%)趋势有企稳迹象".format(abs_off)
+                else:
+                    s4 = 4
+                    repair_detail = "年线下(-{:.1f}%)趋势仍向下".format(abs_off)
+            else:
+                # 重度跌破
+                if approaching and vol_shrinking:
+                    s4 = 5
+                    repair_detail = "年线下较深(-{:.1f}%)但出现止跌信号".format(abs_off)
+                else:
+                    s4 = 0
+                    repair_detail = "年线下很深(-{:.1f}%)无修复信号".format(abs_off)
+    else:
+        repair_detail = "数据不足(需≥250天)"
+    scores["repair"] = s4
+    dims["年线偏离"] = f"{s4}/20 | {repair_detail}"
+
+    # ── 总分 & 等级 ──
+    total = sum(scores.values())
+    if total >= 70:
+        level = "good"; emoji = "🟢"; pos_pct = 0.30
+    elif total >= 50:
+        level = "weak"; emoji = "🟡"; pos_pct = 0.15
+    elif total >= 30:
+        level = "poor"; emoji = "🟠"; pos_pct = 0.10
+    else:
+        level = "bad"; emoji = "🔴"; pos_pct = 0.00
+
+    dim_lines = [f"  • {k}: {v}" for k, v in dims.items()]
+    reason_parts = [
+        f"沪深300 ¥{price:.2f} | 环境{total}分/{emoji}{level}",
+        f"仓位上限: 单只{int(pos_pct*100)}%本金",
+        *dim_lines
+    ]
+
     return {
-        "trend": "bull" if above else "bear",
+        "score": total,
+        "level": level,
+        "level_emoji": emoji,
+        "position_pct": pos_pct,
         "index_price": round(price, 2),
-        "ma250": round(ma250, 2),
-        "pct_above": round(pct, 1),
-        "reason": f"沪深300 ¥{price:.2f} {'在' if above else '跌破'}年线¥{ma250:.2f}（{pct:+.1f}%）"
+        "dimensions": dims,
+        "raw_scores": scores,
+        "reason": "\n".join(reason_parts),
     }
 
 
@@ -286,10 +451,11 @@ def _analyze_one(code, per):
             "signal_strength": signal_strength}
 
 
-def compute_signals(codes, capital=1000):
+def compute_signals(codes, capital=1000, position_pct=0.30):
     """对自选股并发算信号。返回 (rows, per, buys)。
+    position_pct: 单只最大仓位占比（默认30%），由大盘环境动态调整。
     并发拉取，总耗时≈最慢一只，避免串行累加卡死。"""
-    per = round(capital * 0.3, 2)
+    per = round(capital * position_pct, 2)
     clean = [str(c).strip() for c in codes if str(c).strip()]
     rows = []
     with ThreadPoolExecutor(max_workers=min(8, len(clean) or 1)) as ex:
