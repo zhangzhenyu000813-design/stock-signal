@@ -1,0 +1,32 @@
+name: 全市场ETF扫描
+
+on:
+  schedule:
+    # 每天北京时间 08:30 盘前跑一次（UTC+8，故 UTC 0:30）
+    # 选趋势向上+动量正的 Top N 写入 watchlist.txt
+    - cron: '30 0 * * *'
+  workflow_dispatch: # 允许在 GitHub 网页手动触发（测试用）
+
+permissions:
+  contents: write # 允许 workflow 提交 watchlist.txt 回仓库
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 扫描全市场ETF
+        run: python scan_etf.py
+
+      - name: 提交 watchlist
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add watchlist.txt
+          git commit -m "chore: 每日ETF扫描更新watchlist" || echo "无变更，跳过"
+          git push || echo "push跳过"
