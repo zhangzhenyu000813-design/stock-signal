@@ -49,8 +49,11 @@ def run():
 
     new_alerts = []  # (类型, 数据)  类型="自选"|"持仓"
 
-    # 1) 自选股买入/卖出信号
-    codes = core.get_watchlist()
+    # 1) 自选股买入/卖出信号（ETF池 + 个股池 合并扫描）
+    etf_codes = core.get_watchlist()
+    stock_codes = core.get_watchlist(os.path.join(HERE, "stocks_watchlist.txt"))
+    codes = etf_codes + stock_codes
+    print(f"[池] ETF池 {len(etf_codes)}只 + 个股池 {len(stock_codes)}只 = 共 {len(codes)}只")
     rows, per, buys = core.compute_signals(codes, 1000, position_pct=pos_pct)
     # 根据环境等级调整仓位和信号门槛
     for r in rows:
