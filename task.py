@@ -57,13 +57,19 @@ def run():
     rows, per, buys = core.compute_signals(codes, 1000, position_pct=pos_pct)
     # 根据环境等级调整仓位和信号门槛
     for r in rows:
+        is_rebound = r.get("is_rebound", False)
         if hard_block and r["action"] == "买入":
-            # 🔴恶劣环境：完全屏蔽买入
-            r["action"] = "持有/观望"
-            r["reason"] = f"恶劣环境({score}分)空仓：" + str(market.get("index_price", ""))
+            if is_rebound:
+                # 🔴恶劣环境：只允许超跌反弹极小仓试探（逆势博反弹）
+                r["reason"] += f" | 🔴恶劣环境极小仓试探(¥{int(1000*core.PROBE_PCT)})"
+            else:
+                r["action"] = "持有/观望"
+                r["reason"] = f"恶劣环境({score}分)空仓"
         elif level in ("poor", "weak") and r["action"] == "买入":
-            # 🟠弱势(30-50) / 🟡偏弱(50-70)：仅允许最强信号
-            if r.get("signal_strength") != "强":
+            if is_rebound:
+                # 超跌反弹在偏弱/弱势环境也放行（本就是逆势策略）
+                r["reason"] += f" | {emoji}环境{score}分超跌反弹小仓"
+            elif r.get("signal_strength") != "强":
                 r["action"] = "持有/观望"
                 r["reason"] = f"{emoji}环境{score}分，信号不够强，跳过"
             else:

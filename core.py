@@ -12,11 +12,15 @@ UA = {"User-Agent": "Mozilla/5.0", "Referer": "https://quote.eastmoney.com/"}
 
 # ── 策略参数（可调） ──
 TREND_WINDOW = 5       # MA20 斜率看最近几天
-DRAWDOWN_MIN = 0.03    # 最小回调 3%
-DRAWDOWN_MAX = 0.08    # 最大回调 8%
+DRAWDOWN_MIN = 0.03    # 最小回调 3%（趋势回调型买入下限）
+DRAWDOWN_MAX = 0.15    # 最大回调 15%（放宽：A股ETF从高位回撤15-25%是常态，不再一刀切拦）
+OVERSOLD_RSI = 30      # 超卖阈值（超跌反弹分支用）
+DEEP_DRAWDOWN = 0.15   # 深度超跌阈值（超跌反弹分支用）
+REBOUND_HARD_MAX = 0.50  # 回撤超50%不接（防归零，主要针对个股）
 HARD_STOP = -0.08      # 硬止损 -8%
 EXTREME_DROP = -0.05   # 单日跌幅 >5% 极端止损
 TRAILING_STOP = 0.06   # 移动止盈回撤 6%
+PROBE_PCT = 0.15       # 超跌反弹试探仓比例（恶劣环境下用此极小仓）
 
 
 def _get(url, tries=2):
@@ -160,6 +164,36 @@ def is_vol_shrink(data, short=5, long=20):
     if prev_vol <= 0:
         return False
     return recent_vol < prev_vol * 0.8
+
+
+def has_reversal_candle(data, lookback=3):
+    """止跌反转K线识别（超跌反弹分支用）。
+    满足任一即认为有低位承接：
+      ① 锤子线/长下影：下影线 > 实体2倍 且 收阳
+      ② 阳包阴：今日收阳 且 收盘>昨收 且 开盘<昨收（吞噬昨日阴线）
+      ③ 十字星止跌：实体极小(<2%) 且 下影线明显"""
+    if len(data) < 2:
+        return False
+    recent = data[-lookback:]
+    for d in recent:
+        o, c, h, l = d["open"], d["close"], d["high"], d["low"]
+        if l <= 0 or h <= l:
+            continue
+        body = abs(c - o)
+        lower = min(o, c) - l
+        upper = h - max(o, c)
+        # ① 长下影收阳
+        if lower > body * 2 and c > o:
+            return True
+        # ③ 十字星（实体极小但有下影）
+        if body <= (h - l) * 0.15 and lower > (h - l) * 0.4:
+            return True
+    # ② 阳包阴（看最近两天）
+    if len(data) >= 2:
+        y, t = data[-2], data[-1]
+        if t["close"] > t["open"] and t["close"] > y["close"] and t["open"] < y["close"]:
+            return True
+    return False
 
 
 def market_environment():
@@ -351,10 +385,13 @@ def market_environment():
     }
 
 
-def _analyze_one(code, per):
-    """单只股票：拉数据 → 4层过滤算信号 → 返回一行。供线程池并发调用。
-    买入条件：趋势向上 + 回调3-8% + 企稳 + (缩量或RSI合理)
-    卖出条件（自选池）：趋势向下 + 死叉"""
+def _analyze_one(code, per, probe_per=None):
+    """单只股票：拉数据 → 信号 → 返回一行。供线程池并发调用。
+    买入分支：① 趋势回调型（4层过滤） ② 超跌反弹型（逆势，下跌市用）
+    卖出分支（自选池）：死叉 / RSI超买。
+    probe_per: 超跌反弹的极小试探仓（独立于环境仓位）。"""
+    if probe_per is None:
+        probe_per = per
     code = str(code).strip()
     sym, name = resolve_name(code)
     kl = fetch_kline(sym)
@@ -364,7 +401,7 @@ def _analyze_one(code, per):
                 "planned": "—", "stop": "",
                 "trend": "—", "drawdown_pct": None,
                 "stable": False, "vol_shrink": False,
-                "signal_strength": "—", "rsi": None}
+                "signal_strength": "—", "rsi": None, "is_rebound": False}
 
     price = kl[-1]["close"]
     m5, m20 = ma(kl, 5), ma(kl, 20)
@@ -377,6 +414,7 @@ def _analyze_one(code, per):
     action = "持有/观望"
     reason = ""
     signal_strength = "—"
+    is_rebound = False   # 是否超跌反弹信号（区别于趋势回调）
 
     # ── 卖出/减仓信号（自选池中的品种趋势转弱时提醒）──
     prev_m5 = ma(kl[:-1], 5)
@@ -421,15 +459,36 @@ def _analyze_one(code, per):
             action = "买入"
             reason = "+".join(parts)
 
+    # ── 超跌反弹分支（逆势策略，下跌市也能抓机会）──
+    # 仅当尚未触发买卖、仍持有/观望时考虑。核心：别人恐慌我贪婪，但极小仓+硬止损
+    if action == "持有/观望":
+        oversold = (r is not None and r <= OVERSOLD_RSI)
+        deep = dd >= DEEP_DRAWDOWN
+        if (oversold or deep) and dd < REBOUND_HARD_MAX:
+            if stable or has_reversal_candle(kl):
+                action = "买入"
+                is_rebound = True
+                tags = []
+                if oversold:
+                    tags.append(f"RSI{round(r)}超卖")
+                if deep:
+                    tags.append(f"回撤{dd*100:.1f}%深度超跌")
+                reason = "超跌反弹:" + "+".join(tags) + "+止跌"
+                signal_strength = "弱"
+            else:
+                reason = reason or "已超跌但未见止跌信号，继续等"
+        # 否则保持持有/观望
+
     # ── 计划买入量 ──
     stop = round(price * (1 + HARD_STOP), 2)  # 止损价 = -8%
     shares = 0
     if action == "卖出/减仓":
         planned = "—（减仓）"
     elif action == "买入":
+        eff_per = probe_per if is_rebound else per
         lot_cost = price * 100
-        if lot_cost <= per:
-            shares = int(per // lot_cost) * 100
+        if lot_cost <= eff_per:
+            shares = int(eff_per // lot_cost) * 100
             if shares == 0:
                 shares = 100
             planned = f"{shares}份({shares//100}手) / ¥{round(shares * price, 2)}"
@@ -448,18 +507,21 @@ def _analyze_one(code, per):
             "drawdown_pct": round(dd * 100, 1) if dd else 0,
             "stable": stable,
             "vol_shrink": vol_shrink,
-            "signal_strength": signal_strength}
+            "signal_strength": signal_strength,
+            "is_rebound": is_rebound}
 
 
-def compute_signals(codes, capital=1000, position_pct=0.30):
+def compute_signals(codes, capital=1000, position_pct=0.30, probe_pct=PROBE_PCT):
     """对自选股并发算信号。返回 (rows, per, buys)。
     position_pct: 单只最大仓位占比（默认30%），由大盘环境动态调整。
+    probe_pct: 超跌反弹试探仓比例（默认15%），恶劣环境下用此极小仓博反弹。
     并发拉取，总耗时≈最慢一只，避免串行累加卡死。"""
     per = round(capital * position_pct, 2)
+    probe_per = round(capital * probe_pct, 2)
     clean = [str(c).strip() for c in codes if str(c).strip()]
     rows = []
     with ThreadPoolExecutor(max_workers=min(8, len(clean) or 1)) as ex:
-        futs = {ex.submit(_analyze_one, c, per): c for c in clean}
+        futs = {ex.submit(_analyze_one, c, per, probe_per): c for c in clean}
         for f in as_completed(futs):
             try:
                 rows.append(f.result(timeout=15))
