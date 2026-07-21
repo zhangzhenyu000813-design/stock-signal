@@ -102,6 +102,7 @@ def run():
                     lines.append(f"    信号强度：{a.get('signal_strength', '—')}")
                     lines.append(f"    操作：招商APP「普通委托」，数量填 {a['shares']} 份，价格填当前价或市价")
                     lines.append(f"    止损价：¥{a['stop']}（跌破此价考虑卖）")
+                    lines.append(f"    目标止盈价：¥{a.get('target_price', '—')}（涨到主动套现，不等回落）")
                     lines.append(f"    📋 条件单（懒人版·设好就不用盯盘）：招商APP→交易→「条件单/条件委托」")
                     lines.append(f"       · 买入条件单：监控价≤¥{a['price']} → 触发后【市价委托·即时买一价】买入 {a['shares']} 份")
                     lines.append(f"       · 止损条件单：监控价≤¥{a['stop']} → 触发后【市价委托·即时卖一价】卖出 {a['shares']} 份")

@@ -481,6 +481,7 @@ def _analyze_one(code, per, probe_per=None):
 
     # ── 计划买入量 ──
     stop = round(price * (1 + HARD_STOP), 2)  # 止损价 = -8%
+    target = round(price * 1.12, 3)  # 目标止盈价 = +12%（主动套现，不等回落）
     shares = 0
     if action == "卖出/减仓":
         planned = "—（减仓）"
@@ -499,7 +500,7 @@ def _analyze_one(code, per, probe_per=None):
 
     return {"code": code, "name": name, "action": action,
             "reason": reason, "price": price, "planned": planned,
-            "shares": shares, "stop": stop,
+            "shares": shares, "stop": stop, "target_price": target,
             "ma5": round(m5, 3) if m5 else None,
             "ma20": round(m20, 3) if m20 else None,
             "rsi": round(r, 1) if r else None,
@@ -541,7 +542,7 @@ def compute_signals(codes, capital=1000, position_pct=0.30, probe_pct=PROBE_PCT)
 
 def compute_holdings(portfolio):
     """对持仓簿算浮盈、更新最高价、检查卖出条件（趋势v2）。
-    卖出优先级：1.硬止损-8%  2.单日跌>5%  3.趋势破坏(跌破MA20+MA20走平/向下)  4.移动止盈回撤6%
+    卖出优先级：1.硬止损-8%  2.单日跌>5%  3.目标止盈(持仓簿设target_price，到价主动套现)  4.趋势破坏(跌破MA20+MA20走平/向下)  5.移动止盈回撤6%
     返回 (alerts, portfolio)。alerts=需发邮件的卖出提醒；portfolio=更新了high的。"""
     alerts = []
     for h in portfolio.get("holdings", []):
@@ -554,6 +555,7 @@ def compute_holdings(portfolio):
         prev_close = kl[-2]["close"] if len(kl) >= 2 else price
         cost = h["cost"]
         shares = h["shares"]
+        target_price = h.get("target_price")  # 目标止盈价（用户主动套现价）
         h["high_since_buy"] = round(max(h.get("high_since_buy", cost), price), 3)
         high = h["high_since_buy"]
         pnl_pct = (price - cost) / cost
@@ -576,7 +578,12 @@ def compute_holdings(portfolio):
             alerts.append({"code": code, "name": name, "type": "极端波动",
                            "sell_shares": shares, "price": price,
                            "reason": f"单日跌{daily_chg*100:.1f}%，极端波动全卖"})
-        # 3. 趋势破坏：收盘价 < MA20 且 MA20 走平/向下
+        # 3. 目标止盈：持仓簿设了 target_price 且现价达标（用户主动套现，不等回落）
+        elif target_price and price >= target_price and pnl_pct > 0:
+            alerts.append({"code": code, "name": name, "type": "目标止盈",
+                           "sell_shares": shares, "price": price,
+                           "reason": f"现价¥{price}≥目标¥{target_price}（盈利{pnl_pct*100:.1f}%），主动套现锁定利润"})
+        # 4. 趋势破坏：收盘价 < MA20 且 MA20 走平/向下
         elif m20 and price < m20 and trend in ("走平", "向下"):
             alerts.append({"code": code, "name": name, "type": "趋势破坏",
                            "sell_shares": shares, "price": price,
