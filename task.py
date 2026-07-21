@@ -102,12 +102,18 @@ def run():
                     lines.append(f"    信号强度：{a.get('signal_strength', '—')}")
                     lines.append(f"    操作：招商APP「普通委托」，数量填 {a['shares']} 份，价格填当前价或市价")
                     lines.append(f"    止损价：¥{a['stop']}（跌破此价考虑卖）")
+                    lines.append(f"    📋 条件单（懒人版·设好就不用盯盘）：招商APP→交易→「条件单/条件委托」")
+                    lines.append(f"       · 买入条件单：监控价≤¥{a['price']} → 触发后【市价委托·即时买一价】买入 {a['shares']} 份")
+                    lines.append(f"       · 止损条件单：监控价≤¥{a['stop']} → 触发后【市价委托·即时卖一价】卖出 {a['shares']} 份")
                 lines.append(f"    理由：{a.get('reason', '')}")
             else:  # 持仓
                 ss = a['sell_shares']
                 lines.append(f"🟡持仓{a['type']} {a['name']}（{a['code']}）现价 ¥{a['price']}")
                 lines.append(f"    建议卖出：{ss}份({ss//100}手)")
                 lines.append(f"    操作：招商APP「普通委托卖出」，数量填 {ss} 份，价格填市价或限价")
+                lines.append(f"    📋 条件单（懒人版·设好自动跑）：招商APP→交易→「条件单/条件委托」")
+                lines.append(f"       · 卖出条件单：监控价≤¥{a['price']} → 触发后【市价委托·即时卖一价】卖出 {ss} 份")
+                lines.append(f"       · （想留余地就把监控价往下微调几档当止损位，触发即自动卖出）")
                 lines.append(f"    理由：{a['reason']}")
                 lines.append(f"    （卖出后回复告知，更新持仓簿）")
             lines.append("")
