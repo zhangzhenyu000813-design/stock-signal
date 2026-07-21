@@ -60,8 +60,8 @@ def run():
         is_rebound = r.get("is_rebound", False)
         if hard_block and r["action"] == "买入":
             if is_rebound:
-                # 🔴恶劣环境：只允许超跌反弹极小仓试探（逆势博反弹）
-                r["reason"] += f" | 🔴恶劣环境极小仓试探(¥{int(1000*core.PROBE_PCT)})"
+                # 🔴恶劣环境：只允许超跌反弹试探仓（逆势博反弹）
+                r["reason"] += f" | 🔴恶劣环境超跌反弹试探仓(¥{int(1000*core.PROBE_PCT)})"
             else:
                 r["action"] = "持有/观望"
                 r["reason"] = f"恶劣环境({score}分)空仓"
