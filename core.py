@@ -562,7 +562,8 @@ def compute_holdings(portfolio):
             hold_days = (dt.date.today() - dt.date.fromisoformat(h.get("buy_date", ""))).days
         except Exception:
             hold_days = 0
-        h["high_since_buy"] = round(max(h.get("high_since_buy", cost), price), 3)
+        prev_high = h.get("high_since_buy") or cost  # 兼容初始 null
+        h["high_since_buy"] = round(max(prev_high, price), 3)
         high = h["high_since_buy"]
         pnl_pct = (price - cost) / cost
         h["current_price"] = price
