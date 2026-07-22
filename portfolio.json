@@ -12,8 +12,9 @@
       "buy_reason": "超跌反弹:回撤15.9%深度超跌+止跌",
       "stop": 1.11,
       "target_price": 1.355,
-      "high_since_buy": null,
-      "current_price": null
+      "high_since_buy": 1.21,
+      "current_price": 1.174,
+      "pnl_pct": -3.0
     }
   ]
 }
