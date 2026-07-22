@@ -21,6 +21,8 @@ HARD_STOP = -0.08      # 硬止损 -8%
 EXTREME_DROP = -0.05   # 单日跌幅 >5% 极端止损
 TRAILING_STOP = 0.06   # 移动止盈回撤 6%
 PROBE_PCT = 0.30       # 超跌反弹试探仓比例（统一与单只上限30%一致，压低手续费占比；已确认）
+BREAKEVEN = 0.02       # 涨2%算脱离成本区，触发保本止损上移（横盘也能保本出）
+HOLD_TIMEOUT = 25      # 持仓超时天数（自然日），超时未达止盈建议退出释放资金
 
 
 def _get(url, tries=2):
@@ -542,7 +544,7 @@ def compute_signals(codes, capital=1000, position_pct=0.30, probe_pct=PROBE_PCT)
 
 def compute_holdings(portfolio):
     """对持仓簿算浮盈、更新最高价、检查卖出条件（趋势v2）。
-    卖出优先级：1.硬止损-8%  2.单日跌>5%  3.目标止盈(持仓簿设target_price，到价主动套现)  4.趋势破坏(跌破MA20+MA20走平/向下)  5.移动止盈回撤6%
+    卖出优先级：1.硬止损/保本止损-8%  2.单日跌>5%  3.目标止盈(持仓簿设target_price，到价主动套现)  4.趋势破坏(跌破MA20+MA20走平/向下)  5.移动止盈回撤6%  6.持仓超时(>25天未达止盈释放资金)
     返回 (alerts, portfolio)。alerts=需发邮件的卖出提醒；portfolio=更新了high的。"""
     alerts = []
     for h in portfolio.get("holdings", []):
@@ -556,6 +558,10 @@ def compute_holdings(portfolio):
         cost = h["cost"]
         shares = h["shares"]
         target_price = h.get("target_price")  # 目标止盈价（用户主动套现价）
+        try:
+            hold_days = (dt.date.today() - dt.date.fromisoformat(h.get("buy_date", ""))).days
+        except Exception:
+            hold_days = 0
         h["high_since_buy"] = round(max(h.get("high_since_buy", cost), price), 3)
         high = h["high_since_buy"]
         pnl_pct = (price - cost) / cost
@@ -568,11 +574,18 @@ def compute_holdings(portfolio):
         daily_chg = (price - prev_close) / prev_close if prev_close else 0
         trailing_drop = (high - price) / high if high > 0 else 0
 
-        # 1. 硬止损：浮亏 >= -8%
-        if pnl_pct <= HARD_STOP:
-            alerts.append({"code": code, "name": name, "type": "硬止损",
-                           "sell_shares": shares, "price": price,
-                           "reason": f"浮亏{pnl_pct*100:.1f}%，触硬止损线-8%，全卖"})
+        # 1. 硬止损 / 保本止损上移：浮亏≥-8%，或脱离成本区后回吐至成本线
+        stop = round(cost * (1 + HARD_STOP), 2)  # 硬止损价 = -8%
+        breakeven_price = round(cost * (1 + BREAKEVEN), 3)  # 涨2%算脱离成本区
+        locked = high >= breakeven_price  # 曾经涨到过保本线（用最高价，回落也保住本金）
+        eff_stop = cost if locked else stop  # 脱离成本后把止损抬到成本线
+        if price <= eff_stop:
+            if locked:
+                atype, areason = "保本退出", f"曾涨到¥{breakeven_price}脱离成本，现¥{price}回吐至成本线，保本退出不亏"
+            else:
+                atype, areason = "硬止损", f"浮亏{pnl_pct*100:.1f}%，触硬止损线-8%，全卖"
+            alerts.append({"code": code, "name": name, "type": atype,
+                           "sell_shares": shares, "price": price, "reason": areason})
         # 2. 极端波动：单日跌幅 > 5%
         elif daily_chg <= EXTREME_DROP:
             alerts.append({"code": code, "name": name, "type": "极端波动",
@@ -588,11 +601,16 @@ def compute_holdings(portfolio):
             alerts.append({"code": code, "name": name, "type": "趋势破坏",
                            "sell_shares": shares, "price": price,
                            "reason": f"价格¥{price}跌破MA20¥{m20:.3f}且趋势{trend}，全卖"})
-        # 4. 移动止盈：从最高价回撤 >= 6%（仅盈利时）
+        # 5. 移动止盈：从最高价回撤 >= 6%（仅盈利时）
         elif pnl_pct > 0 and trailing_drop >= TRAILING_STOP:
             alerts.append({"code": code, "name": name, "type": "移动止盈",
                            "sell_shares": shares, "price": price,
                            "reason": f"从最高¥{high}回撤{trailing_drop*100:.1f}%，锁利全卖（浮盈{pnl_pct*100:.1f}%）"})
+        # 6. 持仓超时：持有过久未达止盈，释放资金（防横盘占用仓位）
+        elif hold_days > HOLD_TIMEOUT and target_price and price < target_price:
+            alerts.append({"code": code, "name": name, "type": "持仓超时",
+                           "sell_shares": shares, "price": price,
+                           "reason": f"持有{hold_days}天未达止盈¥{target_price}（现¥{price}），建议退出释放资金"})
     return alerts, portfolio
 
 
