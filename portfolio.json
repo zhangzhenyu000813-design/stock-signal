@@ -1,20 +1,23 @@
 {
-  "cash": 879,
+  "cash": 985,
   "banked_profit": 0,
   "initial_capital": 1000,
-  "holdings": [
+  "holdings": [],
+  "history": [
     {
       "code": "588060",
       "name": "科创50ETF广发",
       "shares": 100,
-      "cost": 1.21,
+      "buy_price": 1.21,
       "buy_date": "2026-07-21",
       "buy_reason": "超跌反弹:回撤15.9%深度超跌+止跌",
-      "stop": 1.11,
-      "target_price": 1.355,
-      "high_since_buy": 1.21,
-      "current_price": 1.07,
-      "pnl_pct": -11.6
+      "sell_price": 1.11,
+      "sell_date": "2026-07-28",
+      "sell_reason": "条件单止损触发(≤¥1.11市价卖)",
+      "gross_pnl": -10.0,
+      "commission": 10.0,
+      "net_pnl": -20.0,
+      "net_pnl_pct": -2.0
     }
   ]
 }
