@@ -12,6 +12,7 @@ import mailer
 HERE = os.path.dirname(os.path.abspath(__file__))
 STATE = os.path.join(HERE, "state.json")
 PORTFOLIO = os.path.join(HERE, "portfolio.json")
+SIGNAL_LOG = os.path.join(HERE, "signal_log.jsonl")  # 持久信号日志（复盘用，append 不覆盖）
 
 
 def _load(path):
@@ -26,6 +27,32 @@ def _load(path):
 def _save(path, d):
     with open(path, "w", encoding="utf-8") as f:
         json.dump(d, f, ensure_ascii=False, indent=2)
+
+
+def _log_signal(typ, data, market):
+    """把每次发出的信号结构化追加到 signal_log.jsonl（复盘数据基础）。"""
+    try:
+        rec = {
+            "ts": dt.datetime.now().isoformat(timespec="seconds"),
+            "date": dt.date.today().isoformat(),
+            "type": typ,  # "自选" | "持仓"
+            "code": data.get("code"),
+            "name": data.get("name", ""),
+            "action": data["action"] if typ == "自选" else data.get("type"),
+            "price": data.get("price"),
+            "reason": data.get("reason", ""),
+            "env_score": market.get("score"),
+            "env_level": market.get("level"),
+            "signal_strength": data.get("signal_strength"),
+            "planned": data.get("planned"),
+            "shares": data.get("shares") or data.get("sell_shares"),
+            "stop": data.get("stop"),
+            "target_price": data.get("target_price"),
+        }
+        with open(SIGNAL_LOG, "a", encoding="utf-8") as f:
+            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    except Exception as e:
+        print(f"[信号日志] 写入失败（不影响主流程）：{e}")
 
 
 def run():
@@ -80,6 +107,7 @@ def run():
             key = "watch:" + r["code"]
             if sent.get(key, {}).get("action") != r["action"]:
                 new_alerts.append(("自选", r))
+                _log_signal("自选", r, market)
                 sent[key] = {"action": r["action"], "date": today}
 
     # 2) 持仓止盈止损监控
@@ -88,6 +116,7 @@ def run():
         key = "hold:" + a["code"]
         if sent.get(key, {}).get("action") != a["type"]:
             new_alerts.append(("持仓", a))
+            _log_signal("持仓", a, market)
             sent[key] = {"action": a["type"], "date": today}
 
     # 3) 发邮件

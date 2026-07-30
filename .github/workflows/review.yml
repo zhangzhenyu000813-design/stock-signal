@@ -1,0 +1,40 @@
+name: 每周策略复盘
+
+on:
+  schedule:
+    # 每周日北京时间 20:00 跑（UTC+8 → UTC 12:00）
+    - cron: '0 12 * * 0'
+  workflow_dispatch: # 允许在 GitHub 网页手动触发（测试用）
+
+permissions:
+  contents: write # 允许 workflow 提交复盘报告回仓库
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # 读完整 git 历史，以便 review.py 还原早期信号
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 运行复盘（还原信号 + 拉K线回看 + 生成报告）
+        run: python review.py
+
+      - name: 发送复盘邮件
+        env:
+          MAIL_EMAIL: ${{ secrets.MAIL_EMAIL }}
+          MAIL_AUTHCODE: ${{ secrets.MAIL_AUTHCODE }}
+        run: |
+          python -c "import mailer, datetime; b=open('review_report.md', encoding='utf-8').read(); mailer.send_mail('[周复盘] ' + datetime.date.today().isoformat(), b)"
+
+      - name: 提交复盘报告
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add review_report.md 2>/dev/null || true
+          git commit -m "chore: 周复盘报告" || echo "无变更，跳过"
+          git push || echo "push跳过"
