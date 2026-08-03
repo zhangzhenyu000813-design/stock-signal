@@ -132,7 +132,8 @@ def analyze_signal(sig):
     res["entry"] = entry
     future = kl[idx + 1:]
     if not future:
-        res["note"] = "信号日已是最后一根，无后续"
+        res["note"] = "信号日已是最后一根，无后续K线，等待走势"
+        res["verdict"] = "等待走势"
         return res
 
     def window(n):
@@ -159,12 +160,16 @@ def analyze_signal(sig):
     for n in (5, 10, 20):
         res[f"d{n}"] = stats(n)
 
-    # 判定对错
+    # 判定对错（只基于已有的后续数据）
+    valid_windows = [res[f"d{n}"] for n in (5, 10, 20) if res.get(f"d{n}")]
+    if not valid_windows:
+        res["verdict"] = "等待走势"
+        return res
+
     if action in BUY_ACTIONS:
-        s20 = res.get("d20") or res.get("d10") or res.get("d5")
-        reached = any((res.get(f"d{n}") or {}).get("max_up", -9) >= TARGET for n in (5, 10, 20))
-        stopped = any((res.get(f"d{n}") or {}).get("max_down", 9) <= -HARD_STOP for n in (5, 10, 20))
-        end = (s20 or {}).get("end_chg", 0)
+        reached = any(w["max_up"] >= TARGET for w in valid_windows)
+        stopped = any(w["max_down"] <= -HARD_STOP for w in valid_windows)
+        end = valid_windows[-1]["end_chg"]  # 最长可用窗口的末日涨跌
         if reached:
             verdict = "✅可达止盈"
         elif stopped:
@@ -175,8 +180,7 @@ def analyze_signal(sig):
             verdict = "🟡未止盈且下跌"
         res["verdict"] = verdict
     elif action in SELL_ACTIONS:
-        s10 = res.get("d10") or res.get("d5")
-        end = (s10 or {}).get("end_chg", 0)
+        end = valid_windows[-1]["end_chg"]
         # 卖出后继续跌 = 卖对（避损）；反弹 = 卖飞
         if end < 0:
             verdict = "✅卖对(避损/落袋)"
@@ -250,12 +254,18 @@ def main():
         d10 = a.get("d10") or {}
         d20 = a.get("d20") or {}
         fmt = lambda x: f"{x*100:+.1f}%" if isinstance(x, (int, float)) else "—"
-        mu = max([(d5 or {}).get("max_up", -9), (d10 or {}).get("max_up", -9), (d20 or {}).get("max_up", -9)])
-        md = min([(d5 or {}).get("max_down", 9), (d10 or {}).get("max_down", 9), (d20 or {}).get("max_down", 9)])
+        # 最高/最低只基于真实有数据的窗口，避免缺数据时显示 -900%/+900%
+        ups = [d.get("max_up") for d in (d5, d10, d20) if d.get("max_up") is not None]
+        downs = [d.get("max_down") for d in (d5, d10, d20) if d.get("max_down") is not None]
+        if ups and downs:
+            mu, md = max(ups), min(downs)
+            hl = f"{mu*100:+.1f}%/{md*100:+.1f}%"
+        else:
+            hl = "—"
         lines.append(
             f"| {a['date']} | {a['code']} | {a.get('name','—')} | {a['action']} | "
             f"¥{a['entry']:.3f} | {fmt(d5.get('end_chg'))} | {fmt(d10.get('end_chg'))} | {fmt(d20.get('end_chg'))} | "
-            f"{mu*100:+.1f}%/{md*100:+.1f}% | {a.get('verdict','')} |"
+            f"{hl} | {a.get('verdict','')} |"
         )
 
     lines.append("")
