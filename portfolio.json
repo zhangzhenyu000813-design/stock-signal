@@ -12,8 +12,9 @@
       "buy_reason": "用户实际持仓（成本¥1.3760，具体买入日期待用户确认；当前无止损条件单保护）",
       "stop": 1.09,
       "target_price": 1.333,
-      "current_price": 1.009,
-      "pnl_pct": -26.67
+      "current_price": 1.02,
+      "pnl_pct": -25.9,
+      "high_since_buy": 1.376
     }
   ],
   "history": [
