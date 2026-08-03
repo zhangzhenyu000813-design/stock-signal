@@ -1,8 +1,21 @@
 {
-  "cash": 985,
+  "cash": 218,
   "banked_profit": 0,
-  "initial_capital": 1000,
-  "holdings": [],
+  "initial_capital": 500,
+  "holdings": [
+    {
+      "code": "512760",
+      "name": "芯片ETF国泰",
+      "shares": 200,
+      "cost": 1.376,
+      "buy_date": "待确认",
+      "buy_reason": "用户实际持仓（成本¥1.3760，具体买入日期待用户确认；当前无止损条件单保护）",
+      "stop": 1.09,
+      "target_price": 1.333,
+      "current_price": 1.009,
+      "pnl_pct": -26.67
+    }
+  ],
   "history": [
     {
       "code": "588060",
@@ -17,7 +30,7 @@
       "gross_pnl": -10.0,
       "commission": 10.0,
       "net_pnl": -20.0,
-      "net_pnl_pct": -2.0
+      "net_pnl_pct": -4.0
     }
   ]
 }
