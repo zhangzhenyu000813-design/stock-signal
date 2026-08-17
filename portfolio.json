@@ -12,8 +12,8 @@
       "buy_reason": "条件单(先买后卖)买入；止盈¥1.333/止损¥1.09自动执行。用户决策：交给条件单不手动干预。app显示成本¥1.3760（条件单触发价¥1.185，实际成本以app为准）",
       "stop": 1.09,
       "target_price": 1.333,
-      "current_price": 1.21,
-      "pnl_pct": -12.1,
+      "current_price": 1.205,
+      "pnl_pct": -12.4,
       "high_since_buy": 1.376
     }
   ],
