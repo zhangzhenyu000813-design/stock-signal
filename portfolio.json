@@ -1,22 +1,8 @@
 {
-  "cash": 218,
+  "cash": 451,
   "banked_profit": 0,
   "initial_capital": 500,
-  "holdings": [
-    {
-      "code": "512760",
-      "name": "芯片ETF国泰",
-      "shares": 200,
-      "cost": 1.376,
-      "buy_date": "2026-07-29",
-      "buy_reason": "条件单(先买后卖)买入；止盈¥1.333/止损¥1.09自动执行。用户决策：交给条件单不手动干预。app显示成本¥1.3760（条件单触发价¥1.185，实际成本以app为准）",
-      "stop": 1.09,
-      "target_price": 1.333,
-      "current_price": 1.2,
-      "pnl_pct": -12.8,
-      "high_since_buy": 1.376
-    }
-  ],
+  "holdings": [],
   "history": [
     {
       "code": "588060",
@@ -32,6 +18,21 @@
       "commission": 10.0,
       "net_pnl": -20.0,
       "net_pnl_pct": -4.0
+    },
+    {
+      "code": "512760",
+      "name": "芯片ETF国泰",
+      "shares": 200,
+      "buy_price": 1.376,
+      "buy_date": "2026-07-29",
+      "buy_reason": "条件单(先买后卖)买入；止盈¥1.333/止损¥1.09。用户决策：交给条件单。app成本¥1.3760（条件单触发价¥1.185，实际成本以app为准）。买入方向设成'上涨到X买入'=追涨，买在反弹高点",
+      "sell_price": 1.19,
+      "sell_date": "2026-08-18",
+      "sell_reason": "用户手动卖出（app交割单为准，此处按8/18收盘¥1.19估算）",
+      "gross_pnl": -37.2,
+      "commission": 10.0,
+      "net_pnl": -47.2,
+      "net_pnl_pct": -17.2
     }
   ]
 }
