@@ -1,9 +1,8 @@
 name: 每周策略复盘
 
 on:
-  schedule:
-    # 每周日北京时间 20:00 跑（UTC+8 → UTC 12:00）
-    - cron: '0 12 * * 0'
+  # schedule:  # ⏸️ 已暂停（2026-10-29 用户决定停掉自动运行）
+  #   - cron: '0 12 * * 0'
   workflow_dispatch: # 允许在 GitHub 网页手动触发（测试用）
 
 permissions:

@@ -1,10 +1,8 @@
 name: 全市场ETF扫描
 
 on:
-  schedule:
-    # 每天北京时间 08:30 盘前跑一次（UTC+8，故 UTC 0:30）
-    # 选趋势向上+动量正的 Top N 写入 watchlist.txt
-    - cron: '30 0 * * *'
+  # schedule:  # ⏸️ 已暂停（2026-10-29 用户决定停掉自动运行）
+  #   - cron: '30 0 * * *'
   workflow_dispatch: # 允许在 GitHub 网页手动触发（测试用）
 
 permissions:

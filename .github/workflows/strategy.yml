@@ -1,10 +1,8 @@
 name: 策略信号定时扫描
 
 on:
-  schedule:
-    # 每30分钟跑一次（UTC时间）。北京时间=UTC+8。
-    # 周末/非交易时段信号不变，防重复逻辑会自动跳过发信，不会刷屏。
-    - cron: '*/30 * * * *'
+  # schedule:  # ⏸️ 已暂停（2026-10-29 用户决定停掉自动运行）
+  #   - cron: '*/30 * * * *'
   workflow_dispatch: # 允许在GitHub网页手动触发（测试用）
 
 permissions:
